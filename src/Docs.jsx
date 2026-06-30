@@ -1,11 +1,23 @@
 import { useState, useEffect } from "react";
 
 const C = {
-  primary:"#4f46e5", accent:"#7c3aed", secondary:"#0ea5e9",
-  bg:"#f0f4ff", bgAlt:"#ffffff", bgCode:"#1e1b4b", bgCodeBar:"#2d2a6e",
-  ink:"#1e1b4b", body:"#374151", muted:"#6b7280",
-  border:"#c7d2fe", borderLt:"#e0e7ff", primaryLt:"#e0e7ff",
-  green:"#059669", greenLt:"#d1fae5",
+  primary:   "#2563eb",   // was indigo #4f46e5 — now TideVec blue, matches App.jsx
+  accent:    "#06b6d4",   // was violet #7c3aed — now TideVec cyan
+  secondary: "#06b6d4",   // was sky #0ea5e9 — unified with cyan accent
+  bg:        "#ffffff",   // was #f0f4ff (light indigo wash) — now pure white like App.jsx
+  bgAlt:     "#f8faff",
+  bgCode:    "#0d1117",   // was deep indigo #1e1b4b — now App.jsx's GitHub-dark code bg
+  bgCodeBar: "#161b22",   // was #2d2a6e — matches App.jsx terminal bar
+  ink:       "#0f172a",   // was deep indigo #1e1b4b — now App.jsx ink
+  body:      "#374151",
+  muted:     "#6b7280",
+  border:    "#e2e8f0",   // was indigo-tinted #c7d2fe — now App.jsx neutral border
+  borderLt:  "#f1f5f9",   // was #e0e7ff
+  primaryLt: "#dbeafe",   // was #e0e7ff — now App.jsx blueLt
+  green:     "#059669",
+  greenLt:   "#d1fae5",
+  amber:     "#f59e0b",   // staleness/temporal accent, matches App.jsx
+  amberLt:   "#fef3c7",
 };
 const F = {
   sans:"'Inter',-apple-system,sans-serif",
@@ -28,24 +40,112 @@ const SECTIONS = [
   { id:"gpu",         label:"GPU & TPU" },
 ];
 
+// ── Syntax highlighter — lightweight regex tokenizer, GitHub Dark palette ──
+// Matches the same color scheme already used in App.jsx's terminal demo.
+const TOKEN_COLOR = {
+  comment: "#8b949e",
+  string:  "#a5d6ff",
+  keyword: "#ff7b72",
+  func:    "#d2a8ff",
+  number:  "#79c0ff",
+  type:    "#ffa657",
+  builtin: "#79c0ff",
+  op:      "#c9d1d9",
+  plain:   "#c9d1d9",
+};
+
+const KEYWORDS = {
+  python: ["from","import","def","class","return","if","else","elif","for","while",
+    "in","not","and","or","is","None","True","False","try","except","finally",
+    "with","as","yield","lambda","pass","break","continue","raise","async","await","self"],
+  go: ["package","import","func","return","if","else","for","range","var","const",
+    "type","struct","interface","map","chan","go","defer","select","switch","case",
+    "default","nil","true","false","err","make","new"],
+  java: ["public","private","protected","static","final","class","interface","extends",
+    "implements","new","return","if","else","for","while","try","catch","finally",
+    "throw","throws","void","this","super","null","true","false","import","package",
+    "record","var"],
+  cpp: ["include","namespace","class","struct","public","private","protected","return",
+    "if","else","for","while","const","static","void","int","float","double","bool",
+    "auto","using","template","typename","true","false","nullptr","new","delete"],
+  bash: ["docker","run","build","cd","mkdir","git","clone","pip","install","python",
+    "echo","export","curl","cmake","make"],
+  xml:  [],
+  text: [],
+};
+
+function highlightLine(line, lang) {
+  // Comments — full line takeover
+  const commentMarkers = { python:"#", bash:"#", go:"//", java:"//", cpp:"//", xml:"<!--" };
+  const marker = commentMarkers[lang];
+  if (marker && line.trim().startsWith(marker)) {
+    return <span style={{color:TOKEN_COLOR.comment}}>{line}</span>;
+  }
+
+  // XML/tags — highlight angle brackets and attribute names
+  if (lang === "xml") {
+    const parts = line.split(/(<\/?[\w.-]+|>|\/>)/g);
+    return parts.map((p, i) => {
+      if (/^<\/?[\w.-]+$/.test(p)) return <span key={i} style={{color:TOKEN_COLOR.keyword}}>{p}</span>;
+      if (p === ">" || p === "/>") return <span key={i} style={{color:TOKEN_COLOR.op}}>{p}</span>;
+      return <span key={i} style={{color:TOKEN_COLOR.plain}}>{p}</span>;
+    });
+  }
+
+  const kws = KEYWORDS[lang] || [];
+  // Tokenize: strings, numbers, words, punctuation/whitespace
+  const tokenRe = /("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`)|(\b\d+\.?\d*\b)|([A-Za-z_]\w*)|(\s+)|(.)/g;
+  const out = [];
+  let m, i = 0;
+  while ((m = tokenRe.exec(line)) !== null) {
+    const [, str, num, word, ws, sym] = m;
+    if (str !== undefined) {
+      out.push(<span key={i++} style={{color:TOKEN_COLOR.string}}>{str}</span>);
+    } else if (num !== undefined) {
+      out.push(<span key={i++} style={{color:TOKEN_COLOR.number}}>{num}</span>);
+    } else if (word !== undefined) {
+      const isKw = kws.includes(word);
+      const isCall = line[m.index + word.length] === "(";
+      const isType = /^[A-Z]/.test(word) && !isKw;
+      const color = isKw ? TOKEN_COLOR.keyword
+        : isCall ? TOKEN_COLOR.func
+        : isType ? TOKEN_COLOR.type
+        : TOKEN_COLOR.plain;
+      out.push(<span key={i++} style={{color}}>{word}</span>);
+    } else if (ws !== undefined) {
+      out.push(ws);
+    } else if (sym !== undefined) {
+      out.push(<span key={i++} style={{color:TOKEN_COLOR.op}}>{sym}</span>);
+    }
+  }
+  return out;
+}
+
+function Highlighted({ code, lang }) {
+  const lines = code.split("\n");
+  return lines.map((line, idx) => (
+    <div key={idx}>{line.length ? highlightLine(line, lang) : "\u00a0"}</div>
+  ));
+}
+
 function Code({ lang, children }) {
   const [copied, setCopied] = useState(false);
   return (
     <div style={{
       background:C.bgCode, borderRadius:10,
-      border:"1px solid #3730a3", overflow:"hidden",
+      border:"1px solid #21262d", overflow:"hidden",
       marginBottom:24,
     }}>
       <div style={{
         background:C.bgCodeBar, padding:"9px 16px",
-        borderBottom:"1px solid #3730a3",
+        borderBottom:"1px solid #21262d",
         display:"flex", justifyContent:"space-between", alignItems:"center",
       }}>
-        <span style={{color:"#a5b4fc",fontSize:11,fontFamily:F.mono}}>{lang}</span>
+        <span style={{color:"#8b949e",fontSize:11,fontFamily:F.mono}}>{lang}</span>
         <button onClick={()=>{navigator.clipboard.writeText(children.trim());setCopied(true);setTimeout(()=>setCopied(false),2000);}}
           style={{
-            background:"none", border:"1px solid #4338ca",
-            color:copied?"#6ee7b7":"#a5b4fc",
+            background:"none", border:"1px solid #30363d",
+            color:copied?"#34d399":"#06b6d4",
             borderRadius:5, padding:"2px 10px", cursor:"pointer",
             fontSize:11, fontFamily:F.mono, transition:"color 0.2s",
           }}>{copied?"✓ copied":"copy"}</button>
@@ -53,8 +153,8 @@ function Code({ lang, children }) {
       <pre style={{
         margin:0, padding:"18px 20px",
         fontFamily:F.mono, fontSize:13, lineHeight:1.85,
-        color:"#e0e7ff", overflowX:"auto", whiteSpace:"pre",
-      }}>{children.trim()}</pre>
+        color:"#c9d1d9", overflowX:"auto", whiteSpace:"pre",
+      }}><Highlighted code={children.trim()} lang={lang}/></pre>
     </div>
   );
 }
@@ -114,9 +214,9 @@ export default function Docs() {
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
         *{box-sizing:border-box;margin:0;padding:0;}
-        body{background:#f0f4ff;color:#1e1b4b;font-family:'Inter',sans-serif;-webkit-font-smoothing:antialiased;}
+        body{background:#ffffff;color:#0f172a;font-family:'Inter',sans-serif;-webkit-font-smoothing:antialiased;}
         a{color:inherit;text-decoration:none;}
-        ::-webkit-scrollbar{width:5px;}::-webkit-scrollbar-thumb{background:#c7d2fe;border-radius:3px;}
+        ::-webkit-scrollbar{width:5px;}::-webkit-scrollbar-thumb{background:#bfdbfe;border-radius:3px;}
       `}</style>
 
       {/* Top nav */}
@@ -136,7 +236,7 @@ export default function Docs() {
                 background:`linear-gradient(135deg,${C.primary},${C.accent})`,
                 display:"flex",alignItems:"center",justifyContent:"center",
                 color:"#fff",fontWeight:900,fontSize:14,fontFamily:F.mono,
-              }}>C</div>
+              }}>T</div>
               <span style={{
                 fontWeight:900,fontSize:17,letterSpacing:"-0.02em",
                 background:`linear-gradient(135deg,${C.primary},${C.accent})`,
@@ -212,11 +312,11 @@ export default function Docs() {
           <H3>1. Start the server</H3>
           <Code lang="bash">{`
 # Docker (fastest — no build required)
-docker run -p 6399:6399 ghcr.io/ashishodu2023/tidevec:latest-cpu
+docker run -p 6399:6399 averm004/tidevec:latest
 
 # Or build from source (requires GCC 12+ and CMake 3.20+)
 git clone https://github.com/ashishodu2023/TideVec
-cd Cortexdb && mkdir build && cd build
+cd TideVec && mkdir build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release
 make -j$(nproc)
 ./tidevec-server --host 0.0.0.0 --port 6399
@@ -262,13 +362,13 @@ for hit in db.search("docs", query_embedding, top_k=10, temporal_blend=0.3):
           <H3>CPU (any machine)</H3>
           <Code lang="bash">{`
 docker run -p 6399:6399 -v $(pwd)/data:/data \\
-  ghcr.io/ashishodu2023/tidevec:latest-cpu
+  averm004/tidevec:cpu
           `}</Code>
 
           <H3>GPU (NVIDIA, requires nvidia-container-toolkit)</H3>
           <Code lang="bash">{`
 docker run --gpus all -p 6399:6399 -v $(pwd)/data:/data \\
-  ghcr.io/ashishodu2023/tidevec:latest-gpu
+  averm004/tidevec:gpu
           `}</Code>
 
           <H3>Full observability stack</H3>
